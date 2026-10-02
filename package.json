@@ -1,0 +1,84 @@
+{
+  "name": "copilot-usage-monitor",
+  "displayName": "Copilot Usage Monitor",
+  "description": "Monitor GitHub Copilot usage, local budgets, enterprise billing reports, and usage history.",
+  "version": "0.2.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": ">=1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "copilotUsageMonitor.refresh",
+        "title": "Copilot Usage Monitor: Refresh Now"
+      },
+      {
+        "command": "copilotUsageMonitor.openDashboard",
+        "title": "Copilot Usage Monitor: Open Dashboard"
+      },
+      {
+        "command": "copilotUsageMonitor.configureAccount",
+        "title": "Copilot Usage Monitor: Configure Account"
+      },
+      {
+        "command": "copilotUsageMonitor.configureBudgets",
+        "title": "Copilot Usage Monitor: Configure Budgets"
+      },
+      {
+        "command": "copilotUsageMonitor.configureEnterpriseBilling",
+        "title": "Copilot Usage Monitor: Configure Enterprise Billing"
+      },
+      {
+        "command": "copilotUsageMonitor.resetHistory",
+        "title": "Copilot Usage Monitor: Reset Local History"
+      }
+    ],
+    "configuration": {
+      "title": "Copilot Usage Monitor",
+      "properties": {
+        "copilotUsageMonitor.pollMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 5,
+          "maximum": 120,
+          "description": "How often to refresh Copilot usage while VS Code is running."
+        },
+        "copilotUsageMonitor.showInStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show current Copilot usage in the status bar."
+        },
+        "copilotUsageMonitor.dailyBudget": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Local daily usage alert threshold in credits. Set to 0 to disable."
+        },
+        "copilotUsageMonitor.weeklyBudget": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Local Monday-to-Sunday usage alert threshold in credits. Set to 0 to disable."
+        },
+        "copilotUsageMonitor.monthlyBudget": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Local calendar-month usage alert threshold in credits. Set to 0 to disable."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "node scripts/package-vsix.js"
+  }
+}
