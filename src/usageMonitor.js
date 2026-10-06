@@ -47,6 +47,7 @@ class UsageMonitor {
     this.refreshing = false;
     this.billingRefreshing = false;
     this.personalBillingRefreshing = false;
+    context.globalState.setKeysForSync([ACCOUNT_KEY]);
     this.status = vscode.window.createStatusBarItem(
       STATUSBAR_ID,
       vscode.StatusBarAlignment.Right,
