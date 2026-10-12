@@ -31,6 +31,11 @@ const {
 } = require("./usage/model");
 const { buildTooltip } = require("./ui/tooltip");
 const { buildDashboardHtml } = require("./ui/dashboard");
+const { buildUsageCsv, buildChatSessionUsageCsv } = require("./exports/csv");
+const {
+  collectChatSessionUsage,
+  summarizeChatSessionUsage,
+} = require("./chatlogs/sessionStore");
 
 /**
  * Owns the status bar item, dashboard webview panel, polling timer, and
@@ -47,6 +52,11 @@ class UsageMonitor {
     this.refreshing = false;
     this.billingRefreshing = false;
     this.personalBillingRefreshing = false;
+    this.chatSessionUsage = null;
+    this.chatSessionUsageRefreshing = false;
+    // Lets Settings Sync carry the configured account across machines/profiles
+    // that have Settings Sync turned on; the auth token itself is never
+    // stored here (VS Code's authentication providers manage that globally).
     context.globalState.setKeysForSync([ACCOUNT_KEY]);
     this.status = vscode.window.createStatusBarItem(
       STATUSBAR_ID,
@@ -296,14 +306,7 @@ class UsageMonitor {
         errors,
       };
       await this.context.globalState.update(PERSONAL_BILLING_KEY, next);
-      if (this.panel && !this.panel.disposed)
-        this.panel.webview.html = buildDashboardHtml(
-          this.context.globalState.get(HISTORY_KEY, []),
-          this.context.globalState.get(LATEST_KEY, null),
-          this.cfg(),
-          this.context.globalState.get(ENTERPRISE_BILLING_KEY),
-          next,
-        );
+      this.renderPanel();
 
       const hardFailures = results.filter(
         (result) => result.error && !result.notAvailable,
@@ -427,14 +430,7 @@ class UsageMonitor {
         errors,
       };
       await this.context.globalState.update(ENTERPRISE_BILLING_KEY, next);
-      if (this.panel && !this.panel.disposed)
-        this.panel.webview.html = buildDashboardHtml(
-          this.context.globalState.get(HISTORY_KEY, []),
-          this.context.globalState.get(LATEST_KEY, null),
-          this.cfg(),
-          next,
-          this.context.globalState.get(PERSONAL_BILLING_KEY),
-        );
+      this.renderPanel();
 
       const hardFailures = results.filter(
         (result) => result.error && !result.notAvailable,
@@ -460,14 +456,7 @@ class UsageMonitor {
           authorization: message,
         },
       });
-      if (this.panel && !this.panel.disposed)
-        this.panel.webview.html = buildDashboardHtml(
-          this.context.globalState.get(HISTORY_KEY, []),
-          this.context.globalState.get(LATEST_KEY, null),
-          this.cfg(),
-          this.context.globalState.get(ENTERPRISE_BILLING_KEY),
-          this.context.globalState.get(PERSONAL_BILLING_KEY),
-        );
+      this.renderPanel();
       if (manual)
         await vscode.window.showErrorMessage(
           `Copilot enterprise billing: ${message}`,
@@ -586,14 +575,7 @@ class UsageMonitor {
         `[${now.toISOString()}] ${account.host}: ${sample.used} credits used${sample.entitlement == null ? "" : ` / ${sample.entitlement}`}`,
       );
       this.checkBudgetCrossings(next, sample);
-      if (this.panel && !this.panel.disposed)
-        this.panel.webview.html = buildDashboardHtml(
-          next,
-          sample,
-          this.cfg(),
-          this.context.globalState.get(ENTERPRISE_BILLING_KEY),
-          this.context.globalState.get(PERSONAL_BILLING_KEY),
-        );
+      this.renderPanel();
     } catch (error) {
       const message = error && error.message ? error.message : String(error);
       await this.context.globalState.update(LAST_ERROR_KEY, {
@@ -694,6 +676,88 @@ class UsageMonitor {
     else this.status.hide();
   }
 
+  /** Re-renders the dashboard webview panel's HTML from current state, if it's open. */
+  renderPanel() {
+    if (!this.panel || this.panel.disposed) return;
+    this.panel.webview.html = buildDashboardHtml(
+      this.context.globalState.get(HISTORY_KEY, []),
+      this.context.globalState.get(LATEST_KEY, null),
+      this.cfg(),
+      this.context.globalState.get(ENTERPRISE_BILLING_KEY),
+      this.context.globalState.get(PERSONAL_BILLING_KEY),
+      this.chatSessionUsage,
+    );
+  }
+
+  /**
+   * Reads and aggregates token/credit usage from this workspace's local
+   * VS Code chat session logs (see {@link collectChatSessionUsage}).
+   * Purely local and read-only; makes no network requests.
+   *
+   * @param {boolean} [manual] - Whether to show a completion/error notification.
+   */
+  async refreshChatSessionUsage(manual) {
+    if (this.chatSessionUsageRefreshing) return;
+    this.chatSessionUsageRefreshing = true;
+    try {
+      const { available, reason, requests } = await collectChatSessionUsage(
+        this.context,
+      );
+      this.chatSessionUsage = {
+        available,
+        reason,
+        requests,
+        summary: summarizeChatSessionUsage(requests),
+        fetchedAt: new Date().toISOString(),
+      };
+      this.renderPanel();
+      if (manual)
+        vscode.window.showInformationMessage(
+          available
+            ? `Parsed ${requests.length} local chat request(s) from this workspace's chat session logs.`
+            : reason,
+        );
+    } catch (error) {
+      const message = error && error.message ? error.message : String(error);
+      this.output.appendLine(
+        `[${new Date().toISOString()}] Chat session usage scan failed: ${message}`,
+      );
+      if (manual)
+        vscode.window.showErrorMessage(
+          `Copilot chat session usage: ${message}`,
+        );
+    } finally {
+      this.chatSessionUsageRefreshing = false;
+    }
+  }
+
+  /** Exports local chat session token/credit usage as a CSV file. */
+  async exportChatSessionUsage() {
+    if (!this.chatSessionUsage) await this.refreshChatSessionUsage(false);
+    const requests = this.chatSessionUsage && this.chatSessionUsage.requests;
+    if (!requests || !requests.length) {
+      vscode.window.showInformationMessage(
+        (this.chatSessionUsage && this.chatSessionUsage.reason) ||
+          "No local chat session usage to export yet.",
+      );
+      return;
+    }
+    const csv = buildChatSessionUsageCsv(requests);
+    const defaultName = `copilot-chat-usage-${localDateKey(new Date())}.csv`;
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(defaultName),
+      filters: { "CSV (Excel-compatible)": ["csv"] },
+      saveLabel: "Export",
+    });
+    if (!uri) return;
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(csv, "utf8"));
+    const choice = await vscode.window.showInformationMessage(
+      `Local chat session usage exported to ${uri.fsPath}.`,
+      "Open File",
+    );
+    if (choice) vscode.env.openExternal(uri);
+  }
+
   /** Opens (or reveals and refreshes) the usage dashboard webview panel. */
   openDashboard() {
     const history = this.context.globalState.get(HISTORY_KEY, []);
@@ -712,6 +776,11 @@ class UsageMonitor {
           if (message.command === "account") this.configureAccount();
           if (message.command === "enterpriseBilling")
             this.configureEnterpriseBilling();
+          if (message.command === "exportCsv") this.exportUsageHistory();
+          if (message.command === "refreshChatUsage")
+            this.refreshChatSessionUsage(true);
+          if (message.command === "exportChatUsage")
+            this.exportChatSessionUsage();
         },
         undefined,
         this.context.subscriptions,
@@ -730,8 +799,10 @@ class UsageMonitor {
       this.cfg(),
       this.context.globalState.get(ENTERPRISE_BILLING_KEY),
       this.context.globalState.get(PERSONAL_BILLING_KEY),
+      this.chatSessionUsage,
     );
     this.panel.reveal(vscode.ViewColumn.One);
+    if (!this.chatSessionUsage) this.refreshChatSessionUsage();
   }
 
   /** Prompts for and saves daily/weekly/monthly local budget thresholds. */
@@ -779,6 +850,37 @@ class UsageMonitor {
     );
   }
 
+  /**
+   * Exports the locally stored daily usage history as a CSV file, which
+   * opens directly in Excel or any other spreadsheet application. Covers
+   * only the data this extension collects (estimated daily usage deltas);
+   * GitHub does not expose per-chat-session token usage via any API.
+   */
+  async exportUsageHistory() {
+    const history = this.context.globalState.get(HISTORY_KEY, []);
+    const latest = this.context.globalState.get(LATEST_KEY, null);
+    if (!Array.isArray(history) || !history.length) {
+      vscode.window.showInformationMessage(
+        "No usage history to export yet.",
+      );
+      return;
+    }
+    const csv = buildUsageCsv(history, latest);
+    const defaultName = `copilot-usage-${localDateKey(new Date())}.csv`;
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(defaultName),
+      filters: { "CSV (Excel-compatible)": ["csv"] },
+      saveLabel: "Export",
+    });
+    if (!uri) return;
+    await vscode.workspace.fs.writeFile(uri, Buffer.from(csv, "utf8"));
+    const choice = await vscode.window.showInformationMessage(
+      `Copilot usage history exported to ${uri.fsPath}.`,
+      "Open File",
+    );
+    if (choice) vscode.env.openExternal(uri);
+  }
+
   /** Clears locally stored usage history after user confirmation. */
   async resetHistory() {
     const answer = await vscode.window.showWarningMessage(
@@ -790,14 +892,7 @@ class UsageMonitor {
     await this.context.globalState.update(HISTORY_KEY, []);
     await this.context.globalState.update(LATEST_KEY, null);
     this.updateStatusFromStored();
-    if (this.panel && !this.panel.disposed)
-      this.panel.webview.html = buildDashboardHtml(
-        [],
-        null,
-        this.cfg(),
-        this.context.globalState.get(ENTERPRISE_BILLING_KEY),
-        this.context.globalState.get(PERSONAL_BILLING_KEY),
-      );
+    if (this.panel && !this.panel.disposed) this.renderPanel();
     vscode.window.showInformationMessage(
       "Copilot Usage Monitor history cleared.",
     );

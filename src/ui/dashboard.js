@@ -3,6 +3,7 @@
 const crypto = require("crypto");
 const { formatNumber, escapeHtml } = require("../utils/format");
 const { usageSummary } = require("../usage/model");
+const { groupRequestsBySession } = require("../chatlogs/sessionStore");
 const { DASHBOARD_CSS } = require("./dashboardStyles");
 
 /**
@@ -126,6 +127,62 @@ function renderQuotaBuckets(latest) {
 }
 
 /**
+ * Renders a breakdown of local chat session token/credit usage, parsed
+ * from this workspace's VS Code chat session logs (per-prompt token
+ * counts, model, credits, and response time).
+ *
+ * @param {object | null} chatSessionUsage - Result of {@link import("../usageMonitor").UsageMonitor#refreshChatSessionUsage}.
+ * @returns {string} HTML for the chat session usage section.
+ */
+function renderChatSessionUsage(chatSessionUsage) {
+  const title = "Local chat session token usage";
+  const note =
+    "Parsed from this workspace's local VS Code chat session logs (per-prompt token counts). Covers only chat used in VS Code for this workspace folder — not other workspaces, the GitHub.com web chat, or CLI.";
+  if (!chatSessionUsage)
+    return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)}</div><div class="muted">Not scanned yet.</div></div>`;
+  if (!chatSessionUsage.available)
+    return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)}</div><div class="muted">${escapeHtml(chatSessionUsage.reason || "Not available.")}</div></div>`;
+
+  const s = chatSessionUsage.summary;
+  const modelRows = (s.byModel || [])
+    .map(
+      (m) =>
+        `<tr><td>${escapeHtml(m.model)}</td><td>${formatNumber(m.requests)}</td><td>${formatNumber(m.promptTokens)}</td><td>${formatNumber(m.completionTokens)}</td><td>${formatNumber(m.totalTokens)}</td><td>${m.credits ? m.credits.toFixed(1) : "—"}</td></tr>`,
+    )
+    .join("");
+
+  const groups = groupRequestsBySession(chatSessionUsage.requests || []);
+  const sessionDetails = groups
+    .map((g) => {
+      const totalTokens = g.requests.reduce((sum, r) => sum + r.totalTokens, 0);
+      const totalCredits = g.requests.reduce((sum, r) => sum + (r.credits || 0), 0);
+      const lastUsed = g.requests[0] && g.requests[0].timestamp;
+      const promptRows = g.requests
+        .map(
+          (r) =>
+            `<tr><td>${r.timestamp ? escapeHtml(new Date(r.timestamp).toLocaleString()) : "—"}</td><td>${escapeHtml(r.promptSummary)}</td><td>${escapeHtml(r.model)}</td><td>${formatNumber(r.totalTokens)}</td><td>${r.credits != null ? r.credits.toFixed(1) : "—"}</td></tr>`,
+        )
+        .join("");
+      return `<details><summary><strong>${escapeHtml(g.sessionTitle)}</strong> &nbsp;·&nbsp; ${formatNumber(g.requests.length)} prompt${g.requests.length === 1 ? "" : "s"} &nbsp;·&nbsp; ${formatNumber(totalTokens)} tokens &nbsp;·&nbsp; ${totalCredits ? totalCredits.toFixed(1) : "0"} credits ${lastUsed ? `&nbsp;·&nbsp; last used ${escapeHtml(new Date(lastUsed).toLocaleString())}` : ""}</summary><table><thead><tr><th>When</th><th>Prompt</th><th>Model</th><th>Tokens</th><th>Credits</th></tr></thead><tbody>${promptRows}</tbody></table></details>`;
+    })
+    .join("");
+
+  return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)} · updated ${chatSessionUsage.fetchedAt ? escapeHtml(new Date(chatSessionUsage.fetchedAt).toLocaleString()) : "—"}</div>
+  <div class="grid">
+  <div class="card"><div class="label">Prompts parsed</div><div class="value">${formatNumber(s.totalRequests)}</div></div>
+  <div class="card"><div class="label">Prompt tokens</div><div class="value">${formatNumber(s.totalPromptTokens)}</div></div>
+  <div class="card"><div class="label">Completion tokens</div><div class="value">${formatNumber(s.totalCompletionTokens)}</div></div>
+  <div class="card"><div class="label">Total tokens</div><div class="value">${formatNumber(s.totalTokens)}</div></div>
+  </div>
+  <h3>By model</h3>
+  <table><thead><tr><th>Model</th><th>Prompts</th><th>Prompt tokens</th><th>Completion tokens</th><th>Total tokens</th><th>Credits</th></tr></thead><tbody>${modelRows || '<tr><td colspan="6" class="muted">No local chat requests found.</td></tr>'}</tbody></table>
+  <h3>By chat session <span class="muted">(click to expand prompt-wise details)</span></h3>
+  <div class="chat-sessions">${sessionDetails || '<div class="muted">No local chat requests found.</div>'}</div>
+  <div class="actions"><button id="refreshChatUsage">Rescan chat logs</button><button id="exportChatUsage">Export chat usage (CSV)</button></div>
+  </div>`;
+}
+
+/**
  * Builds the full HTML document for the "Copilot Usage Monitor" dashboard
  * webview panel, including summary cards, a daily history table, and action
  * buttons wired to `postMessage` commands for refresh and configuration.
@@ -135,6 +192,7 @@ function renderQuotaBuckets(latest) {
  * @param {import("vscode").WorkspaceConfiguration} cfg - The extension's configuration section.
  * @param {object | null} enterpriseBilling - Stored documented enterprise billing reports, if configured.
  * @param {object | null} personalBilling - Stored documented personal (individually billed) billing reports.
+ * @param {object | null} chatSessionUsage - Local chat session token/credit usage, if scanned.
  * @returns {string} A complete HTML document string.
  */
 function buildDashboardHtml(
@@ -143,6 +201,7 @@ function buildDashboardHtml(
   cfg,
   enterpriseBilling = null,
   personalBilling = null,
+  chatSessionUsage = null,
 ) {
   const u = usageSummary(history, latest);
   const daily = Number(cfg.get("dailyBudget", 0)) || 0;
@@ -173,12 +232,13 @@ function buildDashboardHtml(
     personalBilling && personalBilling.username
       ? `<div class="section"><h2>Personal billing usage · ${escapeHtml(personalBilling.username)}</h2><div class="muted">Official GitHub billing reports for your individually billed Copilot plan (Free, Pro, Pro+, or an unmanaged seat) · updated ${personalBilling.fetchedAt ? escapeHtml(new Date(personalBilling.fetchedAt).toLocaleString()) : "not yet"}</div>${renderBillingReport("AI credit usage", personalBilling.reports && personalBilling.reports.ai_credit, personalBilling.errors && personalBilling.errors.ai_credit)}${renderBillingReport("Premium request usage", personalBilling.reports && personalBilling.reports.premium_request, personalBilling.errors && personalBilling.errors.premium_request)}</div>`
       : `<div class="section"><h2>Personal billing usage</h2><div class="muted">Not yet retrieved. Configure an account to fetch official AI-credit and premium-request billing reports for your individual Copilot plan.</div></div>`;
+  const chatUsage = renderChatSessionUsage(chatSessionUsage);
 
   const nonce = crypto.randomBytes(16).toString("hex");
 
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';"><style>${DASHBOARD_CSS}</style></head><body>
   <h1>Copilot Usage Monitor</h1><div class="sub">${latest ? `${escapeHtml(latest.host || "GitHub")} · ${escapeHtml(latest.plan || "Copilot")} · Updated ${escapeHtml(new Date(latest.ts).toLocaleString())}` : "No usage snapshot available yet."}</div>
-  <div class="actions"><button id="refresh">Refresh now</button><button id="budgets">Configure budgets</button><button id="account">Configure account</button><button id="enterpriseBilling">Configure enterprise billing</button></div>
+  <div class="actions"><button id="refresh">Refresh now</button><button id="budgets">Configure budgets</button><button id="account">Configure account</button><button id="enterpriseBilling">Configure enterprise billing</button><button id="exportCsv">Export usage (CSV)</button></div>
   <div class="grid">
   <div class="card"><div class="label">${escapeHtml(cycleLabel)}</div><div class="value">${latest ? formatNumber(latest.used) : "—"}</div>${
     latest && latest.unlimited
@@ -194,9 +254,10 @@ function buildDashboardHtml(
   ${quotaBuckets}
   ${personal}
   ${billing}
+  ${chatUsage}
   <div class="section"><h2>Daily usage history</h2><table><thead><tr><th>Date</th><th>Estimated credits used</th><th>Cycle counter at last sample</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No history collected yet. Leave VS Code running to collect snapshots.</td></tr>'}</tbody></table></div>
   <div class="notice"><strong>About these estimates</strong><br>Daily and weekly consumption are derived from changes in GitHub's cumulative counter. Usage before the first snapshot of a day or while VS Code is closed may be missed. Budgets are local alerts, not GitHub-enforced limits. Usage history is stored in VS Code global extension storage; prompts and source code are not collected.</div>
-  <script nonce="${nonce}">const vscode=acquireVsCodeApi();document.getElementById('refresh').addEventListener('click',()=>vscode.postMessage({command:'refresh'}));document.getElementById('budgets').addEventListener('click',()=>vscode.postMessage({command:'budgets'}));document.getElementById('account').addEventListener('click',()=>vscode.postMessage({command:'account'}));document.getElementById('enterpriseBilling').addEventListener('click',()=>vscode.postMessage({command:'enterpriseBilling'}));</script>
+  <script nonce="${nonce}">const vscode=acquireVsCodeApi();document.getElementById('refresh').addEventListener('click',()=>vscode.postMessage({command:'refresh'}));document.getElementById('budgets').addEventListener('click',()=>vscode.postMessage({command:'budgets'}));document.getElementById('account').addEventListener('click',()=>vscode.postMessage({command:'account'}));document.getElementById('enterpriseBilling').addEventListener('click',()=>vscode.postMessage({command:'enterpriseBilling'}));document.getElementById('exportCsv').addEventListener('click',()=>vscode.postMessage({command:'exportCsv'}));const refreshChatBtn=document.getElementById('refreshChatUsage');if(refreshChatBtn)refreshChatBtn.addEventListener('click',()=>vscode.postMessage({command:'refreshChatUsage'}));const exportChatBtn=document.getElementById('exportChatUsage');if(exportChatBtn)exportChatBtn.addEventListener('click',()=>vscode.postMessage({command:'exportChatUsage'}));</script>
   </body></html>`;
 }
 

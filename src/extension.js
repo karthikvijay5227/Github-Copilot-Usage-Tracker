@@ -17,7 +17,7 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand(`${NS}.refresh`, () =>
-      monitor.refreshAll(true),
+      monitor.refresh(true),
     ),
     vscode.commands.registerCommand(`${NS}.openDashboard`, () =>
       monitor.openDashboard(),
@@ -33,6 +33,15 @@ function activate(context) {
     ),
     vscode.commands.registerCommand(`${NS}.configureEnterpriseBilling`, () =>
       monitor.configureEnterpriseBilling(),
+    ),
+    vscode.commands.registerCommand(`${NS}.exportUsage`, () =>
+      monitor.exportUsageHistory(),
+    ),
+    vscode.commands.registerCommand(`${NS}.refreshChatUsage`, () =>
+      monitor.refreshChatSessionUsage(true),
+    ),
+    vscode.commands.registerCommand(`${NS}.exportChatUsage`, () =>
+      monitor.exportChatSessionUsage(),
     ),
   );
 }

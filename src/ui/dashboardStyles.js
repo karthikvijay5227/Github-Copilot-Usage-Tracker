@@ -34,6 +34,12 @@ th{color:var(--vscode-descriptionForeground);font-weight:600}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}
 button{border:1px solid var(--vscode-button-border,transparent);border-radius:5px;padding:7px 12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);cursor:pointer}
 button:hover{background:var(--vscode-button-hoverBackground)}
+.chat-sessions{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.chat-sessions details{border:1px solid var(--vscode-panel-border);border-radius:8px;background:var(--vscode-sideBar-background);overflow:hidden}
+.chat-sessions summary{cursor:pointer;padding:10px 14px;list-style:revert}
+.chat-sessions summary:hover{background:var(--vscode-list-hoverBackground)}
+.chat-sessions details table{margin:0;border-top:1px solid var(--vscode-panel-border)}
+.chat-sessions details table th,.chat-sessions details table td{padding:8px 14px}
 @media(max-width:600px){body{padding:14px}.value{font-size:21px}}
 `;
 

@@ -79,6 +79,21 @@ function textProgress(percent, state) {
   return `${lead}${bar}`;
 }
 
+/**
+ * Formats a millisecond duration as a compact `XmYs`/`Xs` string, matching
+ * the style VS Code's chat UI uses for response timings.
+ *
+ * @param {number | null | undefined} ms - Duration in milliseconds.
+ * @returns {string} The formatted duration, or `"—"` when unavailable.
+ */
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
+
 module.exports = {
   formatNumber,
   formatResetDate,
@@ -86,4 +101,5 @@ module.exports = {
   escapeMarkdown,
   localDateKey,
   textProgress,
+  formatDuration,
 };

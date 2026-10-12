@@ -38,6 +38,18 @@
         "title": "Copilot Usage Monitor: Configure Enterprise Billing"
       },
       {
+        "command": "copilotUsageMonitor.exportUsage",
+        "title": "Copilot Usage Monitor: Export Usage History (CSV)"
+      },
+      {
+        "command": "copilotUsageMonitor.refreshChatUsage",
+        "title": "Copilot Usage Monitor: Rescan Local Chat Session Token Usage"
+      },
+      {
+        "command": "copilotUsageMonitor.exportChatUsage",
+        "title": "Copilot Usage Monitor: Export Local Chat Session Token Usage (CSV)"
+      },
+      {
         "command": "copilotUsageMonitor.resetHistory",
         "title": "Copilot Usage Monitor: Reset Local History"
       }
