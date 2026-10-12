@@ -138,10 +138,23 @@ function renderChatSessionUsage(chatSessionUsage) {
   const title = "Local chat session token usage";
   const note =
     "Parsed from this workspace's local VS Code chat session logs (per-prompt token counts). Covers only chat used in VS Code for this workspace folder — not other workspaces, the GitHub.com web chat, or CLI.";
-  if (!chatSessionUsage)
-    return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)}</div><div class="muted">Not scanned yet.</div></div>`;
+  const actions = (scanning) =>
+    `<div class="actions"><button id="refreshChatUsage" ${scanning ? "disabled" : ""}>${scanning ? "Scanning…" : "Rescan chat logs"}</button><button id="exportChatUsage" ${!chatSessionUsage || !chatSessionUsage.requests || !chatSessionUsage.requests.length ? "disabled" : ""}>Export chat usage (CSV)</button></div>`;
+
+  if (!chatSessionUsage || chatSessionUsage.scanning) {
+    const progress = chatSessionUsage && chatSessionUsage.progress;
+    const pct =
+      progress && progress.total > 0
+        ? Math.round((progress.done / progress.total) * 100)
+        : null;
+    return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)}</div>
+    <div class="muted">${progress && progress.total > 0 ? `Scanning chat logs… ${progress.done} / ${progress.total}` : "Scanning chat logs…"}</div>
+    ${pct !== null ? `<div class="progress"><span class="ok" style="width:${pct}%"></span></div>` : ""}
+    ${actions(true)}
+    </div>`;
+  }
   if (!chatSessionUsage.available)
-    return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)}</div><div class="muted">${escapeHtml(chatSessionUsage.reason || "Not available.")}</div></div>`;
+    return `<div class="section"><h2>${title}</h2><div class="muted">${escapeHtml(note)}</div><div class="muted">${escapeHtml(chatSessionUsage.reason || "Not available.")}</div>${actions(false)}</div>`;
 
   const s = chatSessionUsage.summary;
   const modelRows = (s.byModel || [])
@@ -178,7 +191,7 @@ function renderChatSessionUsage(chatSessionUsage) {
   <table><thead><tr><th>Model</th><th>Prompts</th><th>Prompt tokens</th><th>Completion tokens</th><th>Total tokens</th><th>Credits</th></tr></thead><tbody>${modelRows || '<tr><td colspan="6" class="muted">No local chat requests found.</td></tr>'}</tbody></table>
   <h3>By chat session <span class="muted">(click to expand prompt-wise details)</span></h3>
   <div class="chat-sessions">${sessionDetails || '<div class="muted">No local chat requests found.</div>'}</div>
-  <div class="actions"><button id="refreshChatUsage">Rescan chat logs</button><button id="exportChatUsage">Export chat usage (CSV)</button></div>
+  ${actions(false)}
   </div>`;
 }
 

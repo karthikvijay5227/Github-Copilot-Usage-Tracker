@@ -171,10 +171,12 @@ function findChatSessionsDir(context) {
  * session log for the current workspace.
  *
  * @param {import("vscode").ExtensionContext} context - The extension's activation context.
+ * @param {(progress: {done: number, total: number}) => void} [onProgress] - Called once with
+ *   the file count before scanning starts, then again after each file is parsed.
  * @returns {Promise<{available: boolean, reason?: string, requests: ChatRequestUsage[]}>}
  *   `available` is `false` when there's no workspace open or no logs exist yet.
  */
-async function collectChatSessionUsage(context) {
+async function collectChatSessionUsage(context, onProgress) {
   const dir = findChatSessionsDir(context);
   if (!dir)
     return {
@@ -193,9 +195,11 @@ async function collectChatSessionUsage(context) {
     };
   }
   const all = [];
-  for (const file of files) {
+  if (onProgress) onProgress({ done: 0, total: files.length });
+  for (const [i, file] of files.entries()) {
     const records = await parseChatSessionFile(path.join(dir, file));
     all.push(...records);
+    if (onProgress) onProgress({ done: i + 1, total: files.length });
   }
   all.sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
   return { available: true, requests: all };

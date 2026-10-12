@@ -78,6 +78,9 @@ class UsageMonitor {
     this.refresh(false);
     this.refreshEnterpriseBilling(false);
     this.refreshPersonalBilling(false);
+    // Scan local chat logs in the background from activation, so the data is
+    // usually ready by the time the user opens the dashboard.
+    this.refreshChatSessionUsage(false);
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (
@@ -692,20 +695,46 @@ class UsageMonitor {
   /**
    * Reads and aggregates token/credit usage from this workspace's local
    * VS Code chat session logs (see {@link collectChatSessionUsage}).
-   * Purely local and read-only; makes no network requests.
+   * Purely local and read-only; makes no network requests. Immediately
+   * flips the dashboard into a "scanning" state with live progress so the
+   * user always sees feedback instead of a silent wait.
    *
    * @param {boolean} [manual] - Whether to show a completion/error notification.
    */
   async refreshChatSessionUsage(manual) {
     if (this.chatSessionUsageRefreshing) return;
     this.chatSessionUsageRefreshing = true;
+    this.chatSessionUsage = {
+      ...this.chatSessionUsage,
+      scanning: true,
+      progress: { done: 0, total: 0 },
+    };
+    this.renderPanel();
     try {
+      // Re-rendering the whole webview on every file would be chatty for
+      // workspaces with many chat logs, so only refresh progress a handful
+      // of times across the scan (plus always on the first and last file).
+      let lastRenderedDone = -1;
       const { available, reason, requests } = await collectChatSessionUsage(
         this.context,
+        (progress) => {
+          const step = Math.max(1, Math.ceil(progress.total / 10));
+          const isEdge =
+            progress.done === 0 || progress.done === progress.total;
+          if (!isEdge && progress.done - lastRenderedDone < step) return;
+          lastRenderedDone = progress.done;
+          this.chatSessionUsage = {
+            ...this.chatSessionUsage,
+            scanning: true,
+            progress,
+          };
+          this.renderPanel();
+        },
       );
       this.chatSessionUsage = {
         available,
         reason,
+        scanning: false,
         requests,
         summary: summarizeChatSessionUsage(requests),
         fetchedAt: new Date().toISOString(),
@@ -722,6 +751,13 @@ class UsageMonitor {
       this.output.appendLine(
         `[${new Date().toISOString()}] Chat session usage scan failed: ${message}`,
       );
+      this.chatSessionUsage = {
+        ...this.chatSessionUsage,
+        scanning: false,
+        available: false,
+        reason: message,
+      };
+      this.renderPanel();
       if (manual)
         vscode.window.showErrorMessage(
           `Copilot chat session usage: ${message}`,
@@ -733,7 +769,8 @@ class UsageMonitor {
 
   /** Exports local chat session token/credit usage as a CSV file. */
   async exportChatSessionUsage() {
-    if (!this.chatSessionUsage) await this.refreshChatSessionUsage(false);
+    if (!this.chatSessionUsage || this.chatSessionUsage.scanning)
+      await this.refreshChatSessionUsage(false);
     const requests = this.chatSessionUsage && this.chatSessionUsage.requests;
     if (!requests || !requests.length) {
       vscode.window.showInformationMessage(
@@ -802,7 +839,8 @@ class UsageMonitor {
       this.chatSessionUsage,
     );
     this.panel.reveal(vscode.ViewColumn.One);
-    if (!this.chatSessionUsage) this.refreshChatSessionUsage();
+    if (!this.chatSessionUsage || this.chatSessionUsage.available == null)
+      this.refreshChatSessionUsage();
   }
 
   /** Prompts for and saves daily/weekly/monthly local budget thresholds. */
@@ -860,9 +898,7 @@ class UsageMonitor {
     const history = this.context.globalState.get(HISTORY_KEY, []);
     const latest = this.context.globalState.get(LATEST_KEY, null);
     if (!Array.isArray(history) || !history.length) {
-      vscode.window.showInformationMessage(
-        "No usage history to export yet.",
-      );
+      vscode.window.showInformationMessage("No usage history to export yet.");
       return;
     }
     const csv = buildUsageCsv(history, latest);
