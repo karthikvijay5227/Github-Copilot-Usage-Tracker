@@ -719,15 +719,10 @@ class UsageMonitor {
         this.context,
         (progress) => {
           const step = Math.max(1, Math.ceil(progress.total / 10));
-          const isEdge =
-            progress.done === 0 || progress.done === progress.total;
+          const isEdge = progress.done === 0 || progress.done === progress.total;
           if (!isEdge && progress.done - lastRenderedDone < step) return;
           lastRenderedDone = progress.done;
-          this.chatSessionUsage = {
-            ...this.chatSessionUsage,
-            scanning: true,
-            progress,
-          };
+          this.chatSessionUsage = { ...this.chatSessionUsage, scanning: true, progress };
           this.renderPanel();
         },
       );
@@ -898,7 +893,9 @@ class UsageMonitor {
     const history = this.context.globalState.get(HISTORY_KEY, []);
     const latest = this.context.globalState.get(LATEST_KEY, null);
     if (!Array.isArray(history) || !history.length) {
-      vscode.window.showInformationMessage("No usage history to export yet.");
+      vscode.window.showInformationMessage(
+        "No usage history to export yet.",
+      );
       return;
     }
     const csv = buildUsageCsv(history, latest);

@@ -35,10 +35,31 @@ function renderProgress(v, b) {
 }
 
 /**
- * Renders the daily usage history table rows (most recent 31 days, newest first).
+ * Formats a local `YYYY-MM-DD` date as e.g. "Tuesday, 19th October 2026".
  *
- * @param {import("../usage/model").UsageSample[]} days - Samples scoped to the current cycle, sorted ascending by time.
- * @returns {string} HTML `<tr>` rows, or an empty string when there is no history.
+ * @param {string} dateKey - Local calendar date key.
+ * @returns {string} A readable weekday and ordinal date.
+ */
+function formatHistoryDate(dateKey) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return dateKey;
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  const weekday = new Intl.DateTimeFormat(undefined, { weekday: "long" }).format(date);
+  const monthName = new Intl.DateTimeFormat(undefined, { month: "long" }).format(date);
+  const dayNumber = Number(day);
+  const suffix =
+    dayNumber % 100 >= 11 && dayNumber % 100 <= 13
+      ? "th"
+      : ({ 1: "st", 2: "nd", 3: "rd" }[dayNumber % 10] || "th");
+  return `${weekday}, ${dayNumber}${suffix} ${monthName} ${year}`;
+}
+
+/**
+ * Renders daily usage rows grouped under collapsed year and month disclosures.
+ *
+ * @param {import("../usage/model").UsageSample[]} days - All-time samples (not scoped to a single billing cycle), sorted ascending by time.
+ * @returns {string} HTML for the grouped history disclosures, or an empty string.
  */
 function renderHistoryRows(days) {
   const dailyMap = new Map();
@@ -47,14 +68,48 @@ function renderHistoryRows(days) {
     if (!d) dailyMap.set(s.localDate, { first: s.used, last: s.used });
     else d.last = s.used;
   }
-  return [...dailyMap.entries()]
-    .slice(-31)
-    .reverse()
-    .map(
-      ([date, d]) =>
-        `<tr><td>${escapeHtml(date)}</td><td>${formatNumber(Math.max(0, d.last - d.first))}</td><td>${formatNumber(d.last)}</td></tr>`,
-    )
+  const byYear = new Map();
+  for (const [date, samples] of dailyMap) {
+    const [year, month] = date.split("-");
+    const monthKey = `${year}-${month}`;
+    if (!byYear.has(year)) byYear.set(year, new Map());
+    const months = byYear.get(year);
+    if (!months.has(monthKey)) months.set(monthKey, []);
+    months.get(monthKey).push({
+      date,
+      used: Math.max(0, samples.last - samples.first),
+      cumulative: samples.last,
+    });
+  }
+
+  const yearGroups = [...byYear.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([year, months]) => {
+      const monthGroups = [...months.entries()]
+        .sort(([a], [b]) => b.localeCompare(a))
+        .map(([monthKey, rows]) => {
+          rows.sort((a, b) => b.date.localeCompare(a.date));
+          const monthTotal = rows.reduce((total, row) => total + row.used, 0);
+          const [monthYear, monthNumber] = monthKey.split("-").map(Number);
+          const monthName = new Intl.DateTimeFormat(undefined, {
+            month: "long",
+          }).format(new Date(monthYear, monthNumber - 1, 1));
+          const tableRows = rows
+            .map(
+              (row) =>
+                `<tr><td>${escapeHtml(formatHistoryDate(row.date))}</td><td>${formatNumber(row.used)}</td><td>${formatNumber(row.cumulative)}</td></tr>`,
+            )
+            .join("");
+          return `<details><summary><strong>${escapeHtml(monthName)} ${monthYear}</strong> &nbsp;·&nbsp; ${rows.length} day${rows.length === 1 ? "" : "s"} &nbsp;·&nbsp; ${formatNumber(monthTotal)} estimated credits</summary><table><thead><tr><th>Date</th><th>Estimated credits used</th><th>Cycle counter at last sample</th></tr></thead><tbody>${tableRows}</tbody></table></details>`;
+        })
+        .join("");
+      const yearTotal = [...months.values()]
+        .flat()
+        .reduce((total, row) => total + row.used, 0);
+      return `<details><summary><strong>${year}</strong> &nbsp;·&nbsp; ${months.size} month${months.size === 1 ? "" : "s"} &nbsp;·&nbsp; ${formatNumber(yearTotal)} estimated credits</summary><div class="history-months">${monthGroups}</div></details>`;
+    })
     .join("");
+  return `<div class="history-years">${yearGroups}</div>`;
 }
 
 /**
@@ -229,11 +284,12 @@ function buildDashboardHtml(
     cyclePct >= 100 ? "danger" : cyclePct >= 80 ? "warning" : "ok";
   const cycleLabel = (latest && latest.quotaLabel) || "Current cycle used";
 
+  // Intentionally all-time (not scoped to latest.cycleId) so previous
+  // months/years remain visible under their own collapsed groups once a new
+  // billing cycle starts; the Today/This week/This month cards above still
+  // use usageSummary(), which scopes to the current cycle on its own.
   const days = Array.isArray(history)
-    ? history
-        .filter((x) => !latest || x.cycleId === latest.cycleId)
-        .slice()
-        .sort((a, b) => a.ts.localeCompare(b.ts))
+    ? history.slice().sort((a, b) => a.ts.localeCompare(b.ts))
     : [];
   const rows = renderHistoryRows(days);
   const quotaBuckets = renderQuotaBuckets(latest);
@@ -268,7 +324,7 @@ function buildDashboardHtml(
   ${personal}
   ${billing}
   ${chatUsage}
-  <div class="section"><h2>Daily usage history</h2><table><thead><tr><th>Date</th><th>Estimated credits used</th><th>Cycle counter at last sample</th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No history collected yet. Leave VS Code running to collect snapshots.</td></tr>'}</tbody></table></div>
+  <div class="section"><h2>Daily usage history</h2><div class="muted">All-time, grouped by year and month — expand a year, then a month, to see daily rows.</div>${rows || '<div class="muted">No history collected yet. Leave VS Code running to collect snapshots.</div>'}</div>
   <div class="notice"><strong>About these estimates</strong><br>Daily and weekly consumption are derived from changes in GitHub's cumulative counter. Usage before the first snapshot of a day or while VS Code is closed may be missed. Budgets are local alerts, not GitHub-enforced limits. Usage history is stored in VS Code global extension storage; prompts and source code are not collected.</div>
   <script nonce="${nonce}">const vscode=acquireVsCodeApi();document.getElementById('refresh').addEventListener('click',()=>vscode.postMessage({command:'refresh'}));document.getElementById('budgets').addEventListener('click',()=>vscode.postMessage({command:'budgets'}));document.getElementById('account').addEventListener('click',()=>vscode.postMessage({command:'account'}));document.getElementById('enterpriseBilling').addEventListener('click',()=>vscode.postMessage({command:'enterpriseBilling'}));document.getElementById('exportCsv').addEventListener('click',()=>vscode.postMessage({command:'exportCsv'}));const refreshChatBtn=document.getElementById('refreshChatUsage');if(refreshChatBtn)refreshChatBtn.addEventListener('click',()=>vscode.postMessage({command:'refreshChatUsage'}));const exportChatBtn=document.getElementById('exportChatUsage');if(exportChatBtn)exportChatBtn.addEventListener('click',()=>vscode.postMessage({command:'exportChatUsage'}));</script>
   </body></html>`;

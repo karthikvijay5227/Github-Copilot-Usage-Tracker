@@ -40,6 +40,15 @@ button:hover{background:var(--vscode-button-hoverBackground)}
 .chat-sessions summary:hover{background:var(--vscode-list-hoverBackground)}
 .chat-sessions details table{margin:0;border-top:1px solid var(--vscode-panel-border)}
 .chat-sessions details table th,.chat-sessions details table td{padding:8px 14px}
+.history-years{display:flex;flex-direction:column;gap:8px;margin-top:12px;max-height:480px;overflow-y:auto;padding-right:4px}
+.history-years>details{border:1px solid var(--vscode-panel-border);border-radius:8px;background:var(--vscode-sideBar-background);overflow:hidden}
+.history-years summary{cursor:pointer;padding:11px 14px;list-style:revert}
+.history-years summary:hover{background:var(--vscode-list-hoverBackground)}
+.history-months{display:flex;flex-direction:column;gap:6px;padding:0 10px 10px}
+.history-months details{border:1px solid var(--vscode-panel-border);border-radius:6px;overflow:hidden}
+.history-months summary{padding:9px 12px}
+.history-months table{margin:0;border-top:1px solid var(--vscode-panel-border)}
+.history-months th,.history-months td{padding:8px 12px}
 @media(max-width:600px){body{padding:14px}.value{font-size:21px}}
 `;
 
